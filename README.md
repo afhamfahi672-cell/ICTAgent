@@ -19,10 +19,15 @@ data — swing detection, BOS/CHoCH, equal highs/lows, fair value gaps,
 order blocks, and OTE/Fibonacci zones. `config/` has the phase gate.
 `data/oanda.py` and `data/kite.py` are both implemented — historical
 candles and live pricing for forex (OANDA v20 REST) and Indian
-equities/F&O (Zerodha Kite Connect). `context/`, `agent/` (beyond the
-`Decision` type), `execution/`, and `logging/` are scaffolded with
-docstrings describing what's planned but not yet implemented — see the
-phasing below.
+equities/F&O (Zerodha Kite Connect). `context/` is implemented —
+kill-zone/session timing (no external API) and news + economic calendar
+via Finnhub. `agent/` is implemented — `Reasoner.decide()` calls the
+Claude API with structure + context + playbook rules and returns a
+`Decision`. `execution/` and `logging/` are still scaffolded with
+docstrings describing what's planned — see the phasing below.
+
+114/114 tests passing, all offline (no live credentials or network
+access needed for the suite).
 
 ## Phasing (strict order)
 
@@ -44,12 +49,13 @@ ictagent/
                blocks, OTE/Fibonacci zones. Testable standalone.
   data/        Market data ingestion. oanda.py and kite.py both
                implemented (candles + live pricing).
-  context/     Fundamentals/news + kill-zone/session timing (planned)
+  context/     Implemented. sessions.py (kill-zone/session timing, no
+               external API) + finnhub.py (news + economic calendar).
   playbook/    ICT rules/knowledge base (base_rules.md), loaded into
                the agent's reasoning context
-  agent/       Calls the Claude API each cycle with structure + context
-               + playbook rules, returns a Decision (planned; the
-               Decision type itself is already defined)
+  agent/       Implemented. Reasoner.decide() calls the Claude API each
+               cycle with structure + context + playbook rules, forces
+               a Decision via strict tool use.
   execution/   Order placement, phase-gated (planned)
   logging/     Persistent, queryable decision + rationale log (planned)
   config/      Settings, credentials (env-var only), phase gate
@@ -155,3 +161,79 @@ built later. Live tick-by-tick streaming (`KiteTicker`, WebSocket-based)
 isn't implemented yet — `get_quote()` gives a REST snapshot, which is
 enough for a periodic decision-cycle loop. All parsing is unit-tested
 offline (`tests/test_kite.py`) against an injected fake client.
+
+## Context layer
+
+`ictagent.context.sessions.get_session_context(moment)` — kill-zone and
+trading-session timing, no external API, correct across DST via
+`zoneinfo` (not a fixed UTC offset table, which would silently drift out
+of sync for half the year):
+
+```python
+from ictagent.context.sessions import get_session_context
+
+ctx = get_session_context()  # defaults to now (UTC)
+ctx.open_sessions        # e.g. ["london", "new_york"]
+ctx.active_kill_zones    # e.g. ["ny_am_kz"]
+ctx.in_kill_zone         # bool
+```
+
+`ictagent.context.finnhub.FinnhubClient` — news headlines + economic
+calendar via Finnhub, chosen as a starting provider (see the module
+docstring for the free-tier caveat on the calendar endpoint and how to
+swap providers later). Requires `NEWS_API_KEY`:
+
+```python
+from ictagent.context.finnhub import FinnhubClient
+
+client = FinnhubClient()
+headlines = client.get_news(category="forex")
+events = client.get_economic_calendar("2026-01-01", "2026-01-07")
+```
+
+Both are unit-tested offline (`tests/test_sessions.py`,
+`tests/test_finnhub.py`) — `FinnhubClient` accepts an injectable
+`session`, same pattern as the OANDA/Kite adapters.
+
+## Agent (reasoning layer)
+
+`ictagent.agent.reasoner.Reasoner.decide()` calls the Claude API once
+per decision cycle and returns a `Decision` — the structure comes from
+`structure/`, the model reasons over it plus context and playbook rules,
+and never computes structure itself (it's explicitly instructed not to
+report structural elements absent from the supplied data). Output is
+forced into shape via **strict tool use**: a single `record_trade_decision`
+tool with `strict: true`, `tool_choice` pinned to it — not "ask for JSON
+and hope."
+
+```python
+from ictagent.agent.reasoner import Reasoner
+from ictagent.structure.pipeline import compute_structure
+from ictagent.context.sessions import get_session_context
+
+reasoner = Reasoner()  # reads ANTHROPIC_API_KEY from env via config.settings
+structure_state = compute_structure(candles)
+decision = reasoner.decide(
+    "EUR_USD",
+    structure_state,
+    context_snapshot={"session": get_session_context().to_dict()},
+)
+print(decision.action, decision.rationale)
+```
+
+**Model**: defaults to `claude-opus-5` — current best-practice guidance
+is to default to Opus-tier for real reasoning work and treat cost as an
+explicit choice, not something to quietly optimize away. For a live
+agent running many decision cycles a day that cost is real; if it
+becomes a problem at your cycle frequency, pass
+`Reasoner(config=AgentConfig(model="claude-sonnet-5"))` — nothing else
+changes. The static half of the prompt (playbook rules + instructions)
+is marked cacheable (`cache_control`), since it's identical on every
+cycle and only the structure/context JSON changes.
+
+Safety-classifier refusals (`stop_reason == "refusal"`, an Opus 5
+behavior) raise `AgentRefusalError` rather than crashing on an
+unexpected response shape. All prompt construction and request/response
+wiring is unit-tested offline (`tests/test_prompts.py`,
+`tests/test_reasoner.py`) against an injected fake Claude client — no
+API key needed to run the suite.

@@ -12,17 +12,25 @@ dev = [
 ]
 # Broker / LLM integrations are added as their modules are built out,
 # not up front. Kept here for reference on what each leg will need:
-#   kite    -> kiteconnect
-#   oanda   -> requests (talks to the v20 REST API directly — the
-#              oandapyV20 SDK is unmaintained and its sdist fails to
-#              build against current setuptools, so we don't use it)
-#   agent   -> anthropic
+#   kite     -> kiteconnect
+#   oanda    -> requests (talks to the v20 REST API directly — the
+#               oandapyV20 SDK is unmaintained and its sdist fails to
+#               build against current setuptools, so we don't use it)
+#   agent    -> anthropic
+#   context  -> requests (Finnhub news/calendar); tzdata guarantees
+#               zoneinfo has IANA data on platforms without a system tz
+#               database (Windows, some minimal containers) — harmless
+#               where the system already has one (most Linux/macOS)
 data = [
     "kiteconnect>=4.2",
     "requests>=2.28",
 ]
 agent = [
     "anthropic>=0.40",
+]
+context = [
+    "requests>=2.28",
+    "tzdata>=2023.3",
 ]
 
 [build-system]
