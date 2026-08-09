@@ -17,11 +17,12 @@ Two independent legs share the same agent architecture:
 `structure/` is implemented and unit-tested against synthetic OHLCV
 data — swing detection, BOS/CHoCH, equal highs/lows, fair value gaps,
 order blocks, and OTE/Fibonacci zones. `config/` has the phase gate.
-`data/oanda.py` is implemented — historical candles and live pricing
-(snapshot + stream) against OANDA's v20 REST API. `data/kite.py`,
-`context/`, `agent/` (beyond the `Decision` type), `execution/`, and
-`logging/` are scaffolded with docstrings describing what's planned but
-not yet implemented — see the phasing below.
+`data/oanda.py` and `data/kite.py` are both implemented — historical
+candles and live pricing for forex (OANDA v20 REST) and Indian
+equities/F&O (Zerodha Kite Connect). `context/`, `agent/` (beyond the
+`Decision` type), `execution/`, and `logging/` are scaffolded with
+docstrings describing what's planned but not yet implemented — see the
+phasing below.
 
 ## Phasing (strict order)
 
@@ -41,8 +42,8 @@ ictagent/
                no broker/LLM dependency). Swing highs/lows, BOS/CHoCH,
                equal highs/lows (liquidity), fair value gaps, order
                blocks, OTE/Fibonacci zones. Testable standalone.
-  data/        Market data ingestion. oanda.py implemented (candles +
-               live pricing via the v20 REST API); kite.py planned.
+  data/        Market data ingestion. oanda.py and kite.py both
+               implemented (candles + live pricing).
   context/     Fundamentals/news + kill-zone/session timing (planned)
   playbook/    ICT rules/knowledge base (base_rules.md), loaded into
                the agent's reasoning context
@@ -124,3 +125,33 @@ structure/ must never compute over a candle whose OHLC can still change.
 All response parsing is pure and unit-tested without live credentials or
 network access (`tests/test_oanda.py`); `OandaClient` itself accepts an
 injectable `session` for the same reason.
+
+## Kite Connect adapter
+
+`ictagent.data.kite.KiteClient` wraps the official `kiteconnect` SDK
+(`pip install -e ".[data]"` pulls it in; imported lazily so the module
+and its tests don't require it). Requires `KITE_API_KEY` always, plus
+either a fresh `KITE_ACCESS_TOKEN` already in the environment, or a
+one-time-per-day login:
+
+```python
+from ictagent.data.kite import KiteClient
+
+client = KiteClient()
+print(client.login_url())          # send the user here to log into Kite
+# ...user logs in, gets redirected back with a request_token...
+client.generate_session(request_token)  # exchanges it for today's access_token
+
+candles = client.fetch_candles("NSE", "INFY", interval="day",
+                                from_date="2024-01-01", to_date="2024-06-01")
+quotes = client.get_quote(["NSE:INFY", "NSE:NIFTY 50"])
+```
+
+Unlike OANDA's long-lived token, Kite's `access_token` is only valid for
+roughly one trading day — this client doesn't automate the browser login
+step (that inherently needs a human once a day), it just exposes
+`login_url()`/`generate_session()` for whatever daily login step gets
+built later. Live tick-by-tick streaming (`KiteTicker`, WebSocket-based)
+isn't implemented yet — `get_quote()` gives a REST snapshot, which is
+enough for a periodic decision-cycle loop. All parsing is unit-tested
+offline (`tests/test_kite.py`) against an injected fake client.
