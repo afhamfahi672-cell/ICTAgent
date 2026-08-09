@@ -23,10 +23,14 @@ equities/F&O (Zerodha Kite Connect). `context/` is implemented —
 kill-zone/session timing (no external API) and news + economic calendar
 via Finnhub. `agent/` is implemented — `Reasoner.decide()` calls the
 Claude API with structure + context + playbook rules and returns a
-`Decision`. `execution/` and `logging/` are still scaffolded with
-docstrings describing what's planned — see the phasing below.
+`Decision`. `logging/` is implemented — every decision is persisted with
+its full structure/context snapshot, queryable by instrument/action/date/
+confidence. `execution/` has a full paper-trading simulator wired up to
+the phase gate — nothing beyond simulated fills exists yet, and the
+`autonomous` phase is hard-blocked (see below). Real broker order
+placement (`execution/kite.py`, `execution/oanda.py`) isn't built.
 
-114/114 tests passing, all offline (no live credentials or network
+139/139 tests passing, all offline (no live credentials or network
 access needed for the suite).
 
 ## Phasing (strict order)
@@ -56,8 +60,14 @@ ictagent/
   agent/       Implemented. Reasoner.decide() calls the Claude API each
                cycle with structure + context + playbook rules, forces
                a Decision via strict tool use.
-  execution/   Order placement, phase-gated (planned)
-  logging/     Persistent, queryable decision + rationale log (planned)
+  execution/   Implemented (paper simulation only). ExecutionGate routes
+               a Decision to PaperBroker (paper phase), a
+               pending-confirmation result (semi_auto), or a hard-gated
+               NotImplementedError (autonomous) — no live order code
+               exists yet, in any phase.
+  logging/     Implemented. DecisionLog persists every decision + full
+               structure/context snapshot to SQLite; query.py filters
+               by instrument/action/date/confidence for Phase 2 review.
   config/      Settings, credentials (env-var only), phase gate
 ```
 
@@ -237,3 +247,55 @@ unexpected response shape. All prompt construction and request/response
 wiring is unit-tested offline (`tests/test_prompts.py`,
 `tests/test_reasoner.py`) against an injected fake Claude client — no
 API key needed to run the suite.
+
+## Decision log
+
+`ictagent.logging.DecisionLog` persists every decision — including
+NO_TRADE — with the full `StructureState` and context snapshot that
+produced it, to a local SQLite file:
+
+```python
+from ictagent.logging import DecisionLog, list_decisions
+
+log = DecisionLog()  # ictagent_decisions.db by default
+log.record(decision, structure_state=structure_state, context_snapshot=context, playbook_version="v0.1")
+
+recent = list_decisions(log, instrument="EUR_USD", action="enter", min_confidence=0.6)
+```
+
+This is the audit trail Phase 2 (manual reasoning-quality review) reads
+from — the point is to make the agent's reasoning reviewable, not just
+its trades. `DecisionLog` accepts an injectable `connection` (e.g.
+`sqlite3.connect(":memory:")`), so `tests/test_logging.py` runs with no
+filesystem writes.
+
+## Execution (paper simulation only)
+
+`ictagent.execution.ExecutionGate` routes a `Decision` by the current
+phase — it never places a real order in any phase yet:
+
+```python
+from ictagent.execution import ExecutionGate
+
+gate = ExecutionGate()  # reads ICTAGENT_PHASE from env; defaults to paper
+result = gate.handle(decision)
+print(result.status)  # "simulated_fill" in paper phase
+```
+
+- **paper** (default): `PaperBroker` simulates the fill in memory — opens/
+  closes positions, tracks P&L — with no network call at all.
+- **semi_auto**: returns `"pending_confirmation"` and stops; no broker
+  call is made. Actual human-confirms-then-places-order wiring isn't
+  built yet.
+- **autonomous**: requires `Settings.require_live_trading_enabled()` to
+  pass first (both `ICTAGENT_PHASE` and `ICTAGENT_LIVE_TRADING_CONFIRM`
+  correctly set — see [Phase gate](#phase-gate)), and even then raises
+  `NotImplementedError` — `execution/kite.py`/`execution/oanda.py` order
+  placement don't exist. There is no code path anywhere in this repo
+  that can place a live order.
+
+`HOLD`/`NO_TRADE` decisions short-circuit before any phase check —
+nothing to execute regardless of phase. Fully unit-tested
+(`tests/test_execution.py`), including both autonomous-phase failure
+modes (`PermissionError` without the confirm string, `NotImplementedError`
+with it).
