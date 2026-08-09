@@ -1,0 +1,34 @@
+[project]
+name = "ictagent"
+version = "0.1.0"
+description = "LLM-reasoning trading agent built on ICT / Smart Money Concepts"
+requires-python = ">=3.10"
+readme = "README.md"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+]
+# Broker / LLM integrations are added as their modules are built out,
+# not up front. Kept here for reference on what each leg will need:
+#   kite    -> kiteconnect
+#   oanda   -> oandapyV20
+#   agent   -> anthropic
+data = [
+    "kiteconnect>=4.2",
+    "oandapyV20>=0.7",
+]
+agent = [
+    "anthropic>=0.40",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["ictagent*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
