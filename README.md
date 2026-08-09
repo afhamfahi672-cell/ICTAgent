@@ -17,8 +17,10 @@ Two independent legs share the same agent architecture:
 `structure/` is implemented and unit-tested against synthetic OHLCV
 data — swing detection, BOS/CHoCH, equal highs/lows, fair value gaps,
 order blocks, and OTE/Fibonacci zones. `config/` has the phase gate.
-Everything else (`data/`, `context/`, `agent/`, `execution/`,
-`logging/`) is scaffolded with docstrings describing what's planned but
+`data/oanda.py` is implemented — historical candles and live pricing
+(snapshot + stream) against OANDA's v20 REST API. `data/kite.py`,
+`context/`, `agent/` (beyond the `Decision` type), `execution/`, and
+`logging/` are scaffolded with docstrings describing what's planned but
 not yet implemented — see the phasing below.
 
 ## Phasing (strict order)
@@ -39,7 +41,8 @@ ictagent/
                no broker/LLM dependency). Swing highs/lows, BOS/CHoCH,
                equal highs/lows (liquidity), fair value gaps, order
                blocks, OTE/Fibonacci zones. Testable standalone.
-  data/        Market data ingestion — Kite Connect + OANDA (planned)
+  data/        Market data ingestion. oanda.py implemented (candles +
+               live pricing via the v20 REST API); kite.py planned.
   context/     Fundamentals/news + kill-zone/session timing (planned)
   playbook/    ICT rules/knowledge base (base_rules.md), loaded into
                the agent's reasoning context
@@ -97,3 +100,27 @@ or network access required.
 All API credentials (Kite Connect, OANDA, Claude API, news providers)
 are read from environment variables only — see `.env.example`. Nothing
 is ever hardcoded in this repo.
+
+## OANDA adapter
+
+`ictagent.data.oanda.OandaClient` talks to OANDA's v20 REST API
+directly over `requests` (not the unmaintained `oandapyV20` SDK, whose
+sdist fails to build against current setuptools). Requires `OANDA_API_TOKEN`
+and, for pricing endpoints, `OANDA_ACCOUNT_ID`; `OANDA_ENVIRONMENT` picks
+`practice` (default) or `live`.
+
+```python
+from ictagent.data.oanda import OandaClient
+
+client = OandaClient()  # reads credentials from env via config.settings
+candles = client.fetch_candles("EUR_USD", granularity="M15", count=500)
+quotes = client.get_current_price(["EUR_USD", "GBP_USD"])
+for quote in client.stream_prices(["EUR_USD"]):
+    ...  # long-lived generator; run it in its own thread/task
+```
+
+`fetch_candles` drops incomplete (still-forming) candles by default —
+structure/ must never compute over a candle whose OHLC can still change.
+All response parsing is pure and unit-tested without live credentials or
+network access (`tests/test_oanda.py`); `OandaClient` itself accepts an
+injectable `session` for the same reason.

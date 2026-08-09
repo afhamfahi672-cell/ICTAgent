@@ -1,23 +1,36 @@
 """
 Market data ingestion — candles and live quotes.
 
-Not implemented yet. Planned layout, once we start on this module:
+  data/oanda.py   Implemented. OANDA v20 REST adapter (candles + live
+                   pricing), talking to the REST API directly over
+                   `requests` — see the module docstring for why.
+  data/kite.py    Not implemented yet. Zerodha Kite Connect adapter:
+                   auth/session handling, historical candle fetch, live
+                   quote/tick subscription.
+  data/base.py    `MarketDataProvider` — the shared structural contract
+                   both adapters converge on (`fetch_candles(...) ->
+                   list[Candle]`), so structure/ and agent/ never need
+                   to know which broker produced the data.
+  data/types.py   Broker-agnostic types shared across adapters (`Quote`).
 
-  data/kite.py    Zerodha Kite Connect client: auth/session handling,
-                  historical candle fetch, live quote/tick subscription.
-  data/oanda.py   OANDA v20 REST client: auth/session handling,
-                  historical candle fetch, live pricing stream.
-  data/base.py    Shared interface both adapters implement (e.g. a
-                  `fetch_candles(instrument, timeframe, ...) -> list[Candle]`
-                  contract) so structure/ and agent/ never need to know
-                  which broker produced the data.
-
-Kite and OANDA are kept as fully separate adapters with separate
-auth/session handling — one must be developable/testable without the
-other. Both adapters convert broker-native responses into
-`ictagent.structure.types.Candle`, the same type structure/ already
-consumes, so nothing downstream needs a broker-specific code path.
+Kite and OANDA are fully separate adapters with separate auth/session
+handling — each is developable/testable without the other. Both convert
+broker-native responses into `ictagent.structure.types.Candle`, the same
+type structure/ already consumes.
 
 Credentials are read via ictagent.config.settings.load_settings() —
 never hardcoded here.
 """
+
+from .types import Quote
+from .base import MarketDataProvider
+from .oanda import OandaClient, OandaAuthError, OandaAPIError, OANDA_GRANULARITIES
+
+__all__ = [
+    "Quote",
+    "MarketDataProvider",
+    "OandaClient",
+    "OandaAuthError",
+    "OandaAPIError",
+    "OANDA_GRANULARITIES",
+]

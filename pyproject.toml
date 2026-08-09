@@ -13,11 +13,13 @@ dev = [
 # Broker / LLM integrations are added as their modules are built out,
 # not up front. Kept here for reference on what each leg will need:
 #   kite    -> kiteconnect
-#   oanda   -> oandapyV20
+#   oanda   -> requests (talks to the v20 REST API directly — the
+#              oandapyV20 SDK is unmaintained and its sdist fails to
+#              build against current setuptools, so we don't use it)
 #   agent   -> anthropic
 data = [
     "kiteconnect>=4.2",
-    "oandapyV20>=0.7",
+    "requests>=2.28",
 ]
 agent = [
     "anthropic>=0.40",
