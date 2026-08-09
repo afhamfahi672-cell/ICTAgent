@@ -29,8 +29,11 @@ confidence. `execution/` has a full paper-trading simulator wired up to
 the phase gate — nothing beyond simulated fills exists yet, and the
 `autonomous` phase is hard-blocked (see below). Real broker order
 placement (`execution/kite.py`, `execution/oanda.py`) isn't built.
+`ictagent/cycle.py` is the orchestrator that actually runs a watchlist
+of instruments through all of the above on a schedule — this is what
+turns the pieces into a process that can sit and watch a market.
 
-139/139 tests passing, all offline (no live credentials or network
+148/148 tests passing, all offline (no live credentials or network
 access needed for the suite).
 
 ## Phasing (strict order)
@@ -69,6 +72,10 @@ ictagent/
                structure/context snapshot to SQLite; query.py filters
                by instrument/action/date/confidence for Phase 2 review.
   config/      Settings, credentials (env-var only), phase gate
+  cycle.py     Implemented. DecisionCycleRunner — the orchestrator that
+               runs a watchlist of instruments through all of the above
+               on a schedule. Knows nothing about brokers itself; each
+               watched instrument's candle fetch is injected.
 ```
 
 Every agent decision — including "no trade" — carries a required
@@ -299,3 +306,55 @@ nothing to execute regardless of phase. Fully unit-tested
 (`tests/test_execution.py`), including both autonomous-phase failure
 modes (`PermissionError` without the confirm string, `NotImplementedError`
 with it).
+
+## Running the loop
+
+`ictagent.cycle.DecisionCycleRunner` is what actually watches a market —
+it runs a configured watchlist through fetch → structure → context →
+agent → log → execute, once (`run_once()`) or on a schedule
+(`run_forever()`). It doesn't know about brokers itself: each
+`WatchedInstrument`'s candle fetch is injected, so the same runner works
+against OANDA, Kite, or canned data for a backtest.
+
+```python
+from ictagent.cycle import DecisionCycleRunner, WatchedInstrument
+from ictagent.data.oanda import OandaClient
+from ictagent.structure.pipeline import StructureConfig
+
+oanda = OandaClient()  # reads OANDA_* from env
+
+watchlist = [
+    WatchedInstrument(
+        instrument="EUR_USD",
+        fetch_candles=lambda: oanda.fetch_candles("EUR_USD", granularity="M15", count=300),
+        structure_config=StructureConfig(swing_lookback=2),
+    ),
+    WatchedInstrument(
+        instrument="GBP_USD",
+        fetch_candles=lambda: oanda.fetch_candles("GBP_USD", granularity="M15", count=300),
+    ),
+]
+
+runner = DecisionCycleRunner(
+    watchlist,
+    on_cycle=lambda results: print(f"cycle: {len(results)} instrument(s) processed"),
+)
+
+runner.run_once()                                    # one pass, for testing/inspection
+# runner.run_forever(interval_seconds=15 * 60)        # every 15 minutes, indefinitely
+```
+
+Each pass: fetches candles, computes structure, attaches session/kill-zone
+context (plus anything from `extra_context`, e.g. news), asks the agent
+for a `Decision`, persists it to the `DecisionLog` — including
+`no_trade`, always — then hands it to the `ExecutionGate` (a simulated
+fill by default; nothing live). A failure on one instrument (bad data, a
+Claude API error, a refusal) becomes a `CycleError` in the results list
+rather than aborting the rest of the watchlist — one bad symbol shouldn't
+take a scheduled process down. Fully unit-tested against a fake Claude
+client and an in-memory decision log (`tests/test_cycle.py`), including
+the failure-isolation and scheduling behavior.
+
+This is still just Phase 1 (paper simulation) — `run_forever()` will
+happily sit and generate simulated trades and a full decision log for
+you to review, which is exactly what Phase 2 needs.
