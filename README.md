@@ -10,16 +10,21 @@ a trade decision with explicit, logged rationale.
 Two independent legs share the same agent architecture:
 
 1. **Indian equities + index F&O** — via Zerodha Kite Connect
-2. **Forex** — via OANDA v20 REST API
+2. **Forex** — via Twelve Data (market data) by default, with OANDA v20
+   REST API available as an alternative for anyone who can actually open
+   an OANDA account (see the note in "Twelve Data adapter" below)
 
 ## Status
 
 `structure/` is implemented and unit-tested against synthetic OHLCV
 data — swing detection, BOS/CHoCH, equal highs/lows, fair value gaps,
 order blocks, and OTE/Fibonacci zones. `config/` has the phase gate.
-`data/oanda.py` and `data/kite.py` are both implemented — historical
-candles and live pricing for forex (OANDA v20 REST) and Indian
-equities/F&O (Zerodha Kite Connect). `context/` is implemented —
+`data/twelvedata.py`, `data/oanda.py`, and `data/kite.py` are all
+implemented — historical candles for forex via Twelve Data (the default;
+a plain data API, no brokerage account or country restriction) or OANDA
+v20 REST (alternative; live pricing too, but not available to Indian
+residents — see "Twelve Data adapter" below), and candles + live pricing
+for Indian equities/F&O via Zerodha Kite Connect. `context/` is implemented —
 kill-zone/session timing (no external API) and news + economic calendar
 via Finnhub. `agent/` is implemented — `Reasoner.decide()` calls the
 Claude API with structure + context + playbook rules and returns a
@@ -38,7 +43,7 @@ host like Render — for anyone who'd rather click a phase toggle and
 read a webpage than run `run.py` from a terminal. See "Hosting a
 private dashboard" below.
 
-148/148 tests passing, all offline (no live credentials or network
+193/193 tests passing, all offline (no live credentials or network
 access needed for the suite).
 
 ## Phasing (strict order)
@@ -59,8 +64,9 @@ ictagent/
                no broker/LLM dependency). Swing highs/lows, BOS/CHoCH,
                equal highs/lows (liquidity), fair value gaps, order
                blocks, OTE/Fibonacci zones. Testable standalone.
-  data/        Market data ingestion. oanda.py and kite.py both
-               implemented (candles + live pricing).
+  data/        Market data ingestion. twelvedata.py (default forex
+               source), oanda.py (alternative forex source), and kite.py
+               (Indian equities/F&O) all implemented.
   context/     Implemented. sessions.py (kill-zone/session timing, no
                external API) + finnhub.py (news + economic calendar).
   playbook/    ICT rules/knowledge base (base_rules.md), loaded into
@@ -85,9 +91,9 @@ ictagent/
 
 Every agent decision — including "no trade" — carries a required
 human-readable rationale, stored alongside the decision for later audit.
-Kite Connect and OANDA are kept as fully decoupled integrations with
-separate auth/session handling, so either can be developed and tested
-independently.
+Kite Connect, Twelve Data, and OANDA are kept as fully decoupled
+integrations with separate auth/session handling, so any of them can be
+developed and tested independently.
 
 ## Phase gate
 
@@ -126,17 +132,50 @@ or network access required.
 
 ## Credentials
 
-All API credentials (Kite Connect, OANDA, Claude API, news providers)
-are read from environment variables only — see `.env.example`. Nothing
-is ever hardcoded in this repo.
+All API credentials (Kite Connect, Twelve Data, OANDA, Claude API, news
+providers) are read from environment variables only — see
+`.env.example`. Nothing is ever hardcoded in this repo.
+
+## Twelve Data adapter
+
+`ictagent.data.twelvedata.TwelveDataClient` is the **default forex data
+source** — a plain market-data API (`GET /time_series`), not a
+brokerage. That distinction matters: OANDA (below) requires opening a
+tradeable account, and OANDA does not offer these to Indian residents
+(RBI/FEMA rules restrict Indian residents from opening foreign forex
+broker accounts). Twelve Data is just a data subscription — email
+signup, no KYC, no country restriction — so it's what `run.py` and the
+dashboard use unless you tell them otherwise. Requires
+`TWELVEDATA_API_KEY` (free tier at twelvedata.com).
+
+```python
+from ictagent.data.twelvedata import TwelveDataClient
+
+client = TwelveDataClient()  # reads TWELVEDATA_API_KEY from env
+candles = client.fetch_candles("EUR/USD", interval="15min", count=300)
+```
+
+Note the symbol format is `"EUR/USD"` (slash), not OANDA's `"EUR_USD"`
+(underscore). Twelve Data doesn't guarantee candle ordering in its
+response, so `fetch_candles` sorts chronologically client-side; it also
+doesn't report volume for FX pairs, so `Candle.volume` is `0.0` for
+forex symbols. All response parsing is pure and unit-tested without live
+credentials or network access (`tests/test_twelvedata.py`);
+`TwelveDataClient` itself accepts an injectable `session` for the same
+reason.
 
 ## OANDA adapter
 
-`ictagent.data.oanda.OandaClient` talks to OANDA's v20 REST API
-directly over `requests` (not the unmaintained `oandapyV20` SDK, whose
-sdist fails to build against current setuptools). Requires `OANDA_API_TOKEN`
-and, for pricing endpoints, `OANDA_ACCOUNT_ID`; `OANDA_ENVIRONMENT` picks
-`practice` (default) or `live`.
+`ictagent.data.oanda.OandaClient` is an **alternative** forex data
+source — use it instead of Twelve Data if you can actually open an
+OANDA account (pass `--provider oanda` to `run.py`, or wire
+`OandaClient` into `ictagent/web/scheduler.py` yourself for the
+dashboard). It talks to OANDA's v20 REST API directly over `requests`
+(not the unmaintained `oandapyV20` SDK, whose sdist fails to build
+against current setuptools), and unlike Twelve Data also gives you live
+pricing/streaming, since it's a real broker connection. Requires
+`OANDA_API_TOKEN` and, for pricing endpoints, `OANDA_ACCOUNT_ID`;
+`OANDA_ENVIRONMENT` picks `practice` (default) or `live`.
 
 ```python
 from ictagent.data.oanda import OandaClient
@@ -215,7 +254,7 @@ events = client.get_economic_calendar("2026-01-01", "2026-01-07")
 
 Both are unit-tested offline (`tests/test_sessions.py`,
 `tests/test_finnhub.py`) — `FinnhubClient` accepts an injectable
-`session`, same pattern as the OANDA/Kite adapters.
+`session`, same pattern as the Twelve Data/OANDA/Kite adapters.
 
 ## Agent (reasoning layer)
 
@@ -236,7 +275,7 @@ from ictagent.context.sessions import get_session_context
 reasoner = Reasoner()  # reads ANTHROPIC_API_KEY from env via config.settings
 structure_state = compute_structure(candles)
 decision = reasoner.decide(
-    "EUR_USD",
+    "EUR/USD",
     structure_state,
     context_snapshot={"session": get_session_context().to_dict()},
 )
@@ -272,7 +311,7 @@ from ictagent.logging import DecisionLog, list_decisions
 log = DecisionLog()  # ictagent_decisions.db by default
 log.record(decision, structure_state=structure_state, context_snapshot=context, playbook_version="v0.1")
 
-recent = list_decisions(log, instrument="EUR_USD", action="enter", min_confidence=0.6)
+recent = list_decisions(log, instrument="EUR/USD", action="enter", min_confidence=0.6)
 ```
 
 This is the audit trail Phase 2 (manual reasoning-quality review) reads
@@ -319,24 +358,24 @@ it runs a configured watchlist through fetch → structure → context →
 agent → log → execute, once (`run_once()`) or on a schedule
 (`run_forever()`). It doesn't know about brokers itself: each
 `WatchedInstrument`'s candle fetch is injected, so the same runner works
-against OANDA, Kite, or canned data for a backtest.
+against Twelve Data, OANDA, Kite, or canned data for a backtest.
 
 ```python
 from ictagent.cycle import DecisionCycleRunner, WatchedInstrument
-from ictagent.data.oanda import OandaClient
+from ictagent.data.twelvedata import TwelveDataClient
 from ictagent.structure.pipeline import StructureConfig
 
-oanda = OandaClient()  # reads OANDA_* from env
+td = TwelveDataClient()  # reads TWELVEDATA_API_KEY from env
 
 watchlist = [
     WatchedInstrument(
-        instrument="EUR_USD",
-        fetch_candles=lambda: oanda.fetch_candles("EUR_USD", granularity="M15", count=300),
+        instrument="EUR/USD",
+        fetch_candles=lambda: td.fetch_candles("EUR/USD", interval="15min", count=300),
         structure_config=StructureConfig(swing_lookback=2),
     ),
     WatchedInstrument(
-        instrument="GBP_USD",
-        fetch_candles=lambda: oanda.fetch_candles("GBP_USD", granularity="M15", count=300),
+        instrument="GBP/USD",
+        fetch_candles=lambda: td.fetch_candles("GBP/USD", interval="15min", count=300),
     ),
 ]
 
@@ -394,8 +433,12 @@ purpose-built place for secrets, which a webpage isn't. See
      with.
    - `SESSION_SECRET_KEY` — any long random string (Render has a
      "Generate" button for this).
-   - `ANTHROPIC_API_KEY`, `OANDA_API_TOKEN`, `OANDA_ACCOUNT_ID`,
-     `NEWS_API_KEY` — from the signups described earlier in this README.
+   - `ANTHROPIC_API_KEY`, `TWELVEDATA_API_KEY`, `NEWS_API_KEY` — from the
+     signups described earlier in this README. (`OANDA_API_TOKEN`/
+     `OANDA_ACCOUNT_ID` are commented out in `render.yaml` by default —
+     only uncomment and fill those in if you're using OANDA instead of
+     Twelve Data, and have wired `OandaClient` into
+     `ictagent/web/scheduler.py` yourself.)
    - `ICTAGENT_LIVE_TRADING_CONFIRM` — leave this **blank**. It's what
      keeps live trading locked out regardless of what the dashboard's
      phase dropdown is set to (see the safety note below).
@@ -404,8 +447,9 @@ purpose-built place for secrets, which a webpage isn't. See
    live dashboard.
 
 To watch more than one pair, change `ICTAGENT_WATCHLIST` (comma-separated,
-e.g. `EUR_USD,GBP_USD`) in Render's Environment tab — takes effect on
-the next restart, which Render does automatically after an env var change.
+Twelve Data format, e.g. `EUR/USD,GBP/USD`) in Render's Environment tab —
+takes effect on the next restart, which Render does automatically after
+an env var change.
 
 ### Safety note: the phase dropdown doesn't unlock live trading
 
@@ -432,7 +476,7 @@ out-of-band step you'd take separately, later, when you mean it.
 pip install -e ".[web,data,agent,context]"
 export DASHBOARD_PASSWORD=whatever-you-want
 export SESSION_SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
-# plus the usual OANDA_*/ANTHROPIC_API_KEY/NEWS_API_KEY from .env
+# plus the usual TWELVEDATA_API_KEY/ANTHROPIC_API_KEY/NEWS_API_KEY from .env
 uvicorn ictagent.web.app:app --reload
 ```
 

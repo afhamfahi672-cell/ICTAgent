@@ -41,20 +41,30 @@ services:
       - key: ANTHROPIC_API_KEY
         sync: false
 
-      # --- OANDA v20 REST API (forex) ---
-      - key: OANDA_API_TOKEN
+      # --- Twelve Data (forex market data — the default data source;
+      # a plain data API, no brokerage account, no country restriction.
+      # See ictagent/data/twelvedata.py.) ---
+      - key: TWELVEDATA_API_KEY
         sync: false
-      - key: OANDA_ACCOUNT_ID
-        sync: false
-      - key: OANDA_ENVIRONMENT
-        value: practice
 
       # --- Finnhub (context/ news + economic calendar) ---
       - key: NEWS_API_KEY
         sync: false
 
-      # --- Watchlist + cadence ---
+      # --- Watchlist + cadence. Symbol format is Twelve Data's
+      # ("EUR/USD"), since that's the default data source above. ---
       - key: ICTAGENT_WATCHLIST
-        value: EUR_USD
+        value: EUR/USD
       - key: ICTAGENT_CYCLE_INTERVAL_SECONDS
         value: "900"
+
+      # --- OANDA v20 REST API — NOT used by default (see above).
+      # Uncomment and fill in only if you can use OANDA (it does not
+      # accept Indian residents) and have wired OandaClient into
+      # ictagent/web/scheduler.py yourself.
+      # - key: OANDA_API_TOKEN
+      #   sync: false
+      # - key: OANDA_ACCOUNT_ID
+      #   sync: false
+      # - key: OANDA_ENVIRONMENT
+      #   value: practice

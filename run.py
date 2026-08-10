@@ -8,13 +8,17 @@ Usage:
     python run.py --forever   # runs continuously (Ctrl+C to stop)
 
 Reads the instrument list from ICTAGENT_WATCHLIST in your .env — a
-comma-separated list of OANDA instrument names, e.g. "EUR_USD,GBP_USD".
-Defaults to "EUR_USD" alone if not set.
+comma-separated list of Twelve Data symbols, e.g. "EUR/USD,GBP/USD".
+Defaults to "EUR/USD" alone if not set.
 
-Only wires up the OANDA (forex) leg for now, since it's the one that
-needs nothing beyond a free practice account to try. See README.md's
-"Running the loop" section for how to add a Kite Connect (Indian
-equities) watchlist entry once you have that subscription.
+Wires up the forex leg via Twelve Data (data/twelvedata.py) — a plain
+market-data API with no brokerage account or country restriction,
+unlike OANDA, which doesn't serve Indian residents. Pass
+`--provider oanda` if you're not in that situation and would rather use
+OANDA (needs OANDA_API_TOKEN/OANDA_ACCOUNT_ID instead of
+TWELVEDATA_API_KEY). See README.md's "Running the loop" section for how
+to add a Kite Connect (Indian equities) watchlist entry once you have
+that subscription.
 
 This script is paper-trading only. See config/settings.py and README's
 "Phase gate" section for how live trading stays locked out regardless
@@ -61,7 +65,14 @@ def main() -> None:
         "--interval", type=int, default=15 * 60,
         help="Seconds between cycles in --forever mode (default 900 = 15 minutes).",
     )
-    parser.add_argument("--granularity", default="M15", help="OANDA candle granularity (default M15).")
+    parser.add_argument(
+        "--provider", choices=["twelvedata", "oanda"], default="twelvedata",
+        help="Forex data source (default twelvedata — see module docstring for why).",
+    )
+    parser.add_argument(
+        "--candle-interval", default=None,
+        help='Candle size. Twelve Data: e.g. "15min" (default). OANDA: e.g. "M15".',
+    )
     args = parser.parse_args()
 
     # Imports deliberately happen after load_dotenv() so config.settings
@@ -70,22 +81,38 @@ def main() -> None:
     from ictagent.agent.reasoner import AgentAuthError
     from ictagent.config.settings import load_settings
     from ictagent.cycle import DecisionCycleRunner, WatchedInstrument
-    from ictagent.data.oanda import OandaAuthError, OandaClient
 
     settings = load_settings()
     print(f"Phase: {settings.phase.value} (live trading enabled: {settings.live_trading_enabled})")
 
-    watchlist_env = os.environ.get("ICTAGENT_WATCHLIST", "EUR_USD")
+    default_watchlist = "EUR/USD" if args.provider == "twelvedata" else "EUR_USD"
+    watchlist_env = os.environ.get("ICTAGENT_WATCHLIST", default_watchlist)
     instruments = [s.strip() for s in watchlist_env.split(",") if s.strip()]
+    print(f"Data source: {args.provider}")
     print(f"Watchlist: {', '.join(instruments)}")
 
-    try:
-        oanda = OandaClient(settings=settings)
-    except OandaAuthError as e:
-        _fail(f"OANDA isn't set up yet: {e}")
+    if args.provider == "oanda":
+        from ictagent.data.oanda import OandaAuthError, OandaClient
 
-    def make_fetcher(instrument: str):
-        return lambda: oanda.fetch_candles(instrument, granularity=args.granularity, count=300)
+        candle_interval = args.candle_interval or "M15"
+        try:
+            client = OandaClient(settings=settings)
+        except OandaAuthError as e:
+            _fail(f"OANDA isn't set up yet: {e}")
+
+        def make_fetcher(instrument: str):
+            return lambda: client.fetch_candles(instrument, granularity=candle_interval, count=300)
+    else:
+        from ictagent.data.twelvedata import TwelveDataAuthError, TwelveDataClient
+
+        candle_interval = args.candle_interval or "15min"
+        try:
+            client = TwelveDataClient(settings=settings)
+        except TwelveDataAuthError as e:
+            _fail(f"Twelve Data isn't set up yet: {e}")
+
+        def make_fetcher(instrument: str):
+            return lambda: client.fetch_candles(instrument, interval=candle_interval, count=300)
 
     watchlist = [
         WatchedInstrument(instrument=instrument, fetch_candles=make_fetcher(instrument))

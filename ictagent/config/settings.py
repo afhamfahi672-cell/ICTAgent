@@ -45,10 +45,16 @@ class Settings:
     kite_api_secret: str | None
     kite_access_token: str | None
 
-    # OANDA v20
+    # OANDA v20 (forex broker — requires a tradeable account, which OANDA
+    # does not offer to Indian residents per RBI/FEMA rules; kept for
+    # users who can use it)
     oanda_api_token: str | None
     oanda_account_id: str | None
     oanda_environment: str
+
+    # Twelve Data (forex/equity market data only, no brokerage account —
+    # the default forex data source for users OANDA won't serve)
+    twelvedata_api_key: str | None
 
     # Claude API
     anthropic_api_key: str | None
@@ -105,6 +111,7 @@ def load_settings(env: dict[str, str] | None = None) -> Settings:
         oanda_api_token=e.get("OANDA_API_TOKEN") or None,
         oanda_account_id=e.get("OANDA_ACCOUNT_ID") or None,
         oanda_environment=e.get("OANDA_ENVIRONMENT", "practice"),
+        twelvedata_api_key=e.get("TWELVEDATA_API_KEY") or None,
         anthropic_api_key=e.get("ANTHROPIC_API_KEY") or None,
         news_api_key=e.get("NEWS_API_KEY") or None,
     )

@@ -69,10 +69,38 @@ def test_run_without_credentials_fails_with_a_friendly_message_not_a_traceback()
     import subprocess
 
     repo_root = Path(__file__).resolve().parent.parent
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("OANDA_", "ANTHROPIC_", "ICTAGENT_"))}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(("OANDA_", "TWELVEDATA_", "ANTHROPIC_", "ICTAGENT_"))
+    }
 
     result = subprocess.run(
         ["python3", "run.py"],
+        cwd=repo_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode != 0
+    assert "Traceback" not in result.stderr
+    assert "Twelve Data isn't set up yet" in result.stderr
+
+
+def test_run_with_oanda_provider_without_credentials_fails_with_a_friendly_message():
+    import subprocess
+
+    repo_root = Path(__file__).resolve().parent.parent
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(("OANDA_", "TWELVEDATA_", "ANTHROPIC_", "ICTAGENT_"))
+    }
+
+    result = subprocess.run(
+        ["python3", "run.py", "--provider", "oanda"],
         cwd=repo_root,
         env=env,
         capture_output=True,

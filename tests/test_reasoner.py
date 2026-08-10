@@ -76,6 +76,7 @@ def _settings(**overrides) -> Settings:
         oanda_api_token=None,
         oanda_account_id=None,
         oanda_environment="practice",
+        twelvedata_api_key=None,
         anthropic_api_key="test-key",
         news_api_key=None,
     )

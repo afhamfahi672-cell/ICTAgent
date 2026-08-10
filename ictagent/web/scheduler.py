@@ -5,7 +5,7 @@ this deployable on a single free-tier web service.
 
 Design choices that matter for correctness, not just convenience:
 
-  - `OandaClient` and `Reasoner` are built once, in `__init__` — their
+  - The data client and `Reasoner` are built once, in `__init__` — their
     credentials don't change when the phase does, so there's no reason
     to reconnect every cycle.
   - `PaperBroker` is likewise built once and reused across cycles —
@@ -15,7 +15,11 @@ Design choices that matter for correctness, not just convenience:
   - Only the *phase* is re-resolved every cycle, from `PhaseStore` —
     that's the one thing the dashboard is meant to change live.
 
-Only wires up the OANDA (forex) leg for now, matching run.py.
+Defaults to Twelve Data (data/twelvedata.py) for the forex leg — a
+plain market-data API with no brokerage account or country restriction,
+unlike OANDA (see data/twelvedata.py's module docstring for why this is
+the default here). Pass `data_client=OandaClient(...)` if you can and
+want to use OANDA instead; nothing else about this class changes.
 """
 
 from __future__ import annotations
@@ -27,7 +31,7 @@ from typing import Optional
 from ictagent.agent.reasoner import Reasoner
 from ictagent.config.settings import Settings, load_settings
 from ictagent.cycle import CycleError, DecisionCycleRunner, WatchedInstrument
-from ictagent.data.oanda import OandaClient
+from ictagent.data.twelvedata import TwelveDataClient
 from ictagent.execution.gate import ExecutionGate
 from ictagent.execution.simulator import PaperBroker
 from ictagent.logging.store import DecisionLog
@@ -42,9 +46,9 @@ class CycleScheduler:
         decision_log: DecisionLog,
         phase_store: PhaseStore,
         interval_seconds: int,
-        granularity: str = "M15",
+        interval: str = "15min",
         settings: Optional[Settings] = None,
-        oanda: Optional[OandaClient] = None,
+        data_client=None,
         reasoner: Optional[Reasoner] = None,
         broker: Optional[PaperBroker] = None,
     ):
@@ -52,9 +56,9 @@ class CycleScheduler:
         self._decision_log = decision_log
         self._phase_store = phase_store
         self._interval_seconds = interval_seconds
-        self._granularity = granularity
+        self._interval = interval
         self._base_settings = settings or load_settings()
-        self._oanda = oanda or OandaClient(settings=self._base_settings)
+        self._data_client = data_client or TwelveDataClient(settings=self._base_settings)
         self._reasoner = reasoner or Reasoner(settings=self._base_settings)
         self._broker = broker or PaperBroker()
 
@@ -102,7 +106,7 @@ class CycleScheduler:
         return results
 
     def _make_fetcher(self, instrument: str):
-        return lambda: self._oanda.fetch_candles(instrument, granularity=self._granularity, count=300)
+        return lambda: self._data_client.fetch_candles(instrument, interval=self._interval, count=300)
 
     def _run_forever(self) -> None:
         while not self._stop_event.is_set():

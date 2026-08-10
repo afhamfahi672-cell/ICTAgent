@@ -60,7 +60,9 @@ def create_app(
     async def _lifespan(app: FastAPI):
         if app.state.scheduler is None and auto_start_scheduler:
             try:
-                watchlist_env = os.environ.get("ICTAGENT_WATCHLIST", "EUR_USD")
+                # Twelve Data's own symbol format, e.g. "EUR/USD" — not
+                # OANDA's "EUR_USD". See data/twelvedata.py.
+                watchlist_env = os.environ.get("ICTAGENT_WATCHLIST", "EUR/USD")
                 interval = int(os.environ.get("ICTAGENT_CYCLE_INTERVAL_SECONDS", str(15 * 60)))
                 sched = CycleScheduler(
                     instruments=[s.strip() for s in watchlist_env.split(",") if s.strip()],
