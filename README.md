@@ -32,6 +32,11 @@ placement (`execution/kite.py`, `execution/oanda.py`) isn't built.
 `ictagent/cycle.py` is the orchestrator that actually runs a watchlist
 of instruments through all of the above on a schedule — this is what
 turns the pieces into a process that can sit and watch a market.
+`ictagent/web/` is a private, login-protected website wrapping all of
+the above — a dashboard plus a phase-control panel, deployable to a
+host like Render — for anyone who'd rather click a phase toggle and
+read a webpage than run `run.py` from a terminal. See "Hosting a
+private dashboard" below.
 
 148/148 tests passing, all offline (no live credentials or network
 access needed for the suite).
@@ -358,3 +363,86 @@ the failure-isolation and scheduling behavior.
 This is still just Phase 1 (paper simulation) — `run_forever()` will
 happily sit and generate simulated trades and a full decision log for
 you to review, which is exactly what Phase 2 needs.
+
+## Hosting a private dashboard
+
+`ictagent/web/` is a small, login-protected website — no terminal
+needed to use it day-to-day — that wraps the whole loop:
+
+- A **dashboard**: recent decisions, the reasoning behind each, current
+  phase.
+- A **phase control panel**: switch between `paper` / `semi_auto` /
+  `autonomous` from a dropdown, no redeploy needed.
+- A background loop that runs a decision cycle on an interval, in the
+  same process — nothing separate to keep running.
+
+**Nothing on this site accepts API keys.** Those still go into your
+hosting provider's own environment-variable settings — a proper,
+purpose-built place for secrets, which a webpage isn't. See
+`render.yaml` for exactly which variables it expects.
+
+### Deploying to Render (free tier)
+
+1. Push this repo to your own GitHub account (or use this one, if it's
+   already yours).
+2. At **render.com**, sign up, then **New +** → **Blueprint**, and point
+   it at this repo. Render reads `render.yaml` and sets up the service.
+3. Render will prompt you to fill in the secret values as part of setup
+   (anything marked `sync: false` in `render.yaml`) — all through their
+   web form:
+   - `DASHBOARD_PASSWORD` — whatever you want to log into the dashboard
+     with.
+   - `SESSION_SECRET_KEY` — any long random string (Render has a
+     "Generate" button for this).
+   - `ANTHROPIC_API_KEY`, `OANDA_API_TOKEN`, `OANDA_ACCOUNT_ID`,
+     `NEWS_API_KEY` — from the signups described earlier in this README.
+   - `ICTAGENT_LIVE_TRADING_CONFIRM` — leave this **blank**. It's what
+     keeps live trading locked out regardless of what the dashboard's
+     phase dropdown is set to (see the safety note below).
+4. Deploy. Render gives you a URL like `https://ictagent-dashboard.onrender.com`.
+5. Open it, log in with the password from step 3, and you're watching a
+   live dashboard.
+
+To watch more than one pair, change `ICTAGENT_WATCHLIST` (comma-separated,
+e.g. `EUR_USD,GBP_USD`) in Render's Environment tab — takes effect on
+the next restart, which Render does automatically after an env var change.
+
+### Safety note: the phase dropdown doesn't unlock live trading
+
+You can click the dashboard's phase control to `autonomous` freely — it
+won't do anything dangerous, because:
+
+1. `ICTAGENT_LIVE_TRADING_CONFIRM` is **not** settable from the
+   dashboard. It only exists as a real environment variable on Render's
+   own settings page, deliberately outside this app's control, per the
+   two-independent-switches design in [Phase gate](#phase-gate).
+   Leaving it blank means `Settings.require_live_trading_enabled()`
+   still raises `PermissionError` no matter what the dashboard says.
+2. Even past that check, there is still no code that can place a real
+   order (`execution/kite.py`/`execution/oanda.py` don't exist yet) —
+   see [Execution](#execution-paper-simulation-only).
+
+So the dashboard gives you real, live control over the *workflow*
+phase, while the actual live-money switch stays a deliberate,
+out-of-band step you'd take separately, later, when you mean it.
+
+### Running it locally instead
+
+```bash
+pip install -e ".[web,data,agent,context]"
+export DASHBOARD_PASSWORD=whatever-you-want
+export SESSION_SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+# plus the usual OANDA_*/ANTHROPIC_API_KEY/NEWS_API_KEY from .env
+uvicorn ictagent.web.app:app --reload
+```
+
+Then open `http://localhost:8000`.
+
+### Testing
+
+Fully unit-tested with FastAPI's `TestClient` and no real credentials —
+`tests/test_phase_store.py`, `tests/test_web_auth.py`,
+`tests/test_web_app.py`. Covers login/logout, wrong-password handling,
+phase changes, the "run a cycle now" button, and — importantly — a
+missing/misconfigured environment variable producing a friendly error
+on the page rather than a crash.

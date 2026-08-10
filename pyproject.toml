@@ -9,6 +9,7 @@ dependencies = []
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4",
+    "httpx>=0.27",  # FastAPI's TestClient needs this
 ]
 # Broker / LLM integrations are added as their modules are built out,
 # not up front. Kept here for reference on what each leg will need:
@@ -31,6 +32,16 @@ agent = [
 context = [
     "requests>=2.28",
     "tzdata>=2023.3",
+]
+# web: the hosted dashboard (ictagent/web/). itsdangerous signs the
+# session cookie; python-multipart is required by FastAPI/Starlette to
+# parse the login and phase-change HTML form posts.
+web = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "jinja2>=3.1",
+    "itsdangerous>=2.1",
+    "python-multipart>=0.0.9",
 ]
 
 [build-system]

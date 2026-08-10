@@ -1,0 +1,60 @@
+# Render Blueprint — deploy this repo's dashboard by connecting your
+# GitHub account at render.com and choosing "New +" -> "Blueprint",
+# pointing it at this repo. Render reads this file and sets up the
+# service automatically.
+#
+# Every `sync: false` entry below is a secret: Render will prompt you to
+# type its value into their own dashboard during setup (or afterwards,
+# under this service's "Environment" tab) — the value itself never goes
+# into this file or this repo. Entries with a `value:` are non-secret
+# defaults you can change later from the same "Environment" tab, no
+# redeploy needed for most of them.
+#
+# See README.md's "Hosting a private dashboard" section for the full
+# walkthrough, including where to get each secret.
+
+services:
+  - type: web
+    name: ictagent-dashboard
+    runtime: python
+    plan: free
+    buildCommand: "pip install -e '.[web,data,agent,context]'"
+    startCommand: "uvicorn ictagent.web.app:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      # --- Dashboard login (you choose these) ---
+      - key: DASHBOARD_PASSWORD
+        sync: false
+      - key: SESSION_SECRET_KEY
+        sync: false
+
+      # --- Trading phase / execution gate — see config/settings.py ---
+      # ICTAGENT_PHASE is only the *starting* phase at boot; the
+      # dashboard's phase control changes it live from there without a
+      # redeploy. ICTAGENT_LIVE_TRADING_CONFIRM is NOT settable from the
+      # dashboard on purpose — see README's safety note.
+      - key: ICTAGENT_PHASE
+        value: paper
+      - key: ICTAGENT_LIVE_TRADING_CONFIRM
+        sync: false
+
+      # --- Claude API (agent/ reasoning layer) ---
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
+      # --- OANDA v20 REST API (forex) ---
+      - key: OANDA_API_TOKEN
+        sync: false
+      - key: OANDA_ACCOUNT_ID
+        sync: false
+      - key: OANDA_ENVIRONMENT
+        value: practice
+
+      # --- Finnhub (context/ news + economic calendar) ---
+      - key: NEWS_API_KEY
+        sync: false
+
+      # --- Watchlist + cadence ---
+      - key: ICTAGENT_WATCHLIST
+        value: EUR_USD
+      - key: ICTAGENT_CYCLE_INTERVAL_SECONDS
+        value: "900"

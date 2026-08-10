@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}ICTAgent — Dashboard{% endblock %}
+{% block body %}
+<header>
+  <h1>ICTAgent</h1>
+  <a href="/logout">Log out</a>
+</header>
+<main>
+
+  {% if scheduler_error %}
+  <div class="error-box">
+    <strong>The background loop isn't running:</strong> {{ scheduler_error }}
+    <br>Check your environment variables on your hosting provider's settings page, then redeploy or restart.
+  </div>
+  {% elif not scheduler_running %}
+  <div class="error-box">
+    The background loop hasn't started yet. If this doesn't change after a
+    minute, check your hosting provider's logs.
+  </div>
+  {% endif %}
+
+  <div class="panel">
+    <h2>Phase</h2>
+    <p>
+      Current: <span class="badge badge-{{ current_phase }}">{{ current_phase }}</span>
+      &nbsp;·&nbsp;
+      Live trading enabled: <strong>{{ "yes" if live_trading_enabled else "no" }}</strong>
+    </p>
+    <form method="post" action="/phase" class="inline">
+      <select name="phase">
+        {% for p in phases %}
+        <option value="{{ p }}" {% if p == current_phase %}selected{% endif %}>{{ p }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit">Set phase</button>
+    </form>
+    <form method="post" action="/run-now" class="inline">
+      <button type="submit" class="secondary">Run a cycle now</button>
+    </form>
+    <p class="muted" style="margin-top: 14px;">
+      Switching to <strong>autonomous</strong> here does <strong>not</strong> by
+      itself unlock live trading — that also requires
+      <code>ICTAGENT_LIVE_TRADING_CONFIRM</code> to be set correctly in your
+      hosting provider's environment variables, a separate step this page
+      cannot do for you. Live order placement isn't built yet regardless.
+    </p>
+  </div>
+
+  <div class="panel">
+    <h2>Recent decisions</h2>
+    {% if decisions %}
+    <table>
+      <thead>
+        <tr>
+          <th>When</th>
+          <th>Instrument</th>
+          <th>Action</th>
+          <th>Entry / Stop / Target</th>
+          <th>Confidence</th>
+          <th>Rationale</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in decisions %}
+        <tr>
+          <td class="muted">{{ d.timestamp.strftime("%Y-%m-%d %H:%M") }}</td>
+          <td>{{ d.instrument }}</td>
+          <td><span class="badge badge-{{ d.action }}">{{ d.action }}</span>{% if d.direction %} <span class="muted">{{ d.direction }}</span>{% endif %}</td>
+          <td class="muted">
+            {{ "%.5f"|format(d.entry) if d.entry is not none else "—" }} /
+            {{ "%.5f"|format(d.stop) if d.stop is not none else "—" }} /
+            {{ "%.5f"|format(d.target) if d.target is not none else "—" }}
+          </td>
+          <td class="muted">{{ "%.0f%%"|format(d.confidence * 100) if d.confidence is not none else "—" }}</td>
+          <td class="rationale">{{ d.rationale }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">No decisions logged yet — they'll appear here after the first cycle runs.</p>
+    {% endif %}
+  </div>
+
+</main>
+{% endblock %}

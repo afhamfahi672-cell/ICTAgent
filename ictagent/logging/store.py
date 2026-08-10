@@ -52,14 +52,23 @@ CREATE INDEX IF NOT EXISTS idx_decisions_action ON decisions(action);
 class DecisionLog:
     """`connection` can be injected (any `sqlite3.Connection`, e.g. an
     in-memory database) — used by tests to avoid touching the filesystem.
-    Defaults to a real file at `db_path`."""
+    Defaults to a real file at `db_path`, opened with
+    `check_same_thread=False`: a DecisionLog is commonly shared between a
+    background scheduler thread (web/scheduler.py) and a web framework's
+    request-handling thread pool (web/app.py), and SQLite otherwise
+    refuses to touch a connection from any thread but the one that
+    created it. CPython's GIL keeps individual calls effectively atomic
+    for this module's light, mostly-sequential access pattern, so this
+    doesn't need its own additional locking on top."""
 
     def __init__(
         self,
         db_path: Union[str, Path] = DEFAULT_DB_PATH,
         connection: Optional[sqlite3.Connection] = None,
     ):
-        self._conn = connection if connection is not None else sqlite3.connect(str(db_path))
+        self._conn = (
+            connection if connection is not None else sqlite3.connect(str(db_path), check_same_thread=False)
+        )
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
         self._conn.commit()

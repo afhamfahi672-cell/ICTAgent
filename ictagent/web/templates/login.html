@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}ICTAgent — Log in{% endblock %}
+{% block body %}
+<div class="login-wrap">
+  <div class="login-box panel">
+    <h2>ICTAgent</h2>
+    {% if error %}<div class="error-box">{{ error }}</div>{% endif %}
+    <form method="post" action="/login">
+      <p class="muted">Enter the dashboard password you set in your hosting provider's environment variables.</p>
+      <input type="password" name="password" placeholder="Password" autofocus style="width: 100%; margin-bottom: 12px;">
+      <button type="submit" style="width: 100%;">Log in</button>
+    </form>
+  </div>
+</div>
+{% endblock %}
